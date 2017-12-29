@@ -1,0 +1,75 @@
+title: 写给PM的iOS消息推送
+photos:
+  - http://images.apple.com/cn/home/images/og.jpg
+date: 2016-01-26 09:50:19
+tags: push
+---
+
+本文摘自iOS开发者博客，请PM阅读
+
+__基本功__
+
+iOS在诞生之初为了最大程度的保证用户体验，做了一些高瞻远瞩且影响深远的设计。APNs（Apple Push Notification service）就是其中一项。
+
+早期iOS设备的内存和CPU资源都很有限，为了让前台活跃的app拥有尽可能多的系统资源，以及节约设备电量，iOS一开始就“不允许”普通app的进程常驻后台。这个决定很大程度上保障了用户体验和延长了手机的待机时间，但app的开发商需要和他们的用户保持联系。开发商需要有一个稳定的网络通道能每隔一段时间推送新的内容到用户设备。Apple决定自己来搭建维护这个通道，也就是我们今天所说的APNs。记得刚开始接触iOS开发的时候，看到有不少开发者吐槽push机制，觉得不可控且增加了开发成本。其实稍微思考下Apple今天的平台规模和消息量，以及所带来的成本消耗，就能明白Apple设计这个机制所需要的智慧和魄力。一切都是为了用户。 
+
+APNs虽然允许开发商推送消息到用户设备，但考虑到消息的量级和成本，这个由Apple维护的长链接通道就不可能是无限制使用的。APNs有着诸多的限制： 
+
+**可靠性**。一般情况下，Apple会保证这个通道的Qaulity of Service，也就是推送的消息能及时稳定到达设备。不过一旦用户的设备处于offline状态，Apple只会存储发送给用户的最新一条push，之前发送的push会被直接丢掉。而且这最后一条离线push也是有过期时间的。一些用户应该有过这种经历，在使用微信的时候，明明对方发送了多条消息，却只收到了一条push。 
+
+**Payload Size**。每一条push消息的包体大小是有最大限制的。Apple在文档里清楚的说明，push只应该用来通知用户有新的内容，而不应该用来承载内容本身。理论上payload size越小，push到达设备的概率就越高。在iOS8之前max payload size是256字节，到iOS8发布这个最大值被调整到了2048字节，再到最近的iOS9发布，引入了HTTP2.0，payload size又被设为4KB了。老版本的256字节实在有点捉襟见肘，连塞一个链接进去都要考虑再三。到2KB的时候就宽裕多了，已经有不少开发商开始尝试往里面放少量的业务数据了，如果能减少打开app之后的一次网络请求何乐而不为呢。当然4KB的想象空间会更大。Apple一直在调整这个数值，为的是给开发商更多的空间去提升用户体验。push慢慢变的不仅仅是一条“alert”那么简单了。 
+
+**成功率并不高**。Apple虽然保证了push通道一定程度的可靠性，但push由于各种各样的原因并不能保证较高水平的到达率。push需要向用户申请权限，即使当时赋予了权限，后面也可能由于push过于频繁被用户又关掉。在夜间模式下push虽然能到达通知栏，可用户没有任何感知，更不用说点击push启动app了。还有server端token失效，这点可以通过feedback service来清理失效的token。Apple的APNs server据说每天会发送超过百亿条push，在某个时间段出现峰值的时候，开发商server和Apple server连接的成功率也会降低。还有客户端设备所处网络环境并不稳定等等因素，使得通过push成功启动app的成功率并不怎么高。 
+
+理解了上面这些限制，就能按照Apple的规范向用户推送内容了。但push里面的门道远不止这么简单，Apple也从没有停止过对APNs体验的优化，类似payload size调整，interactive notification等等，每一个新的feature增加，哪怕是细微的改动，都能被聪明的开发者加以利用，以四两拨千斤提升产品的体验。下面就介绍一些笔者所了解到的“隐蔽门道”。
+
+
+
+
+__不仅仅是Local Push__
+很多个人开发者不具备搭建server的条件，一般会设置一个定时的local push来提醒用户唤醒自己的app。Local push看起来似乎是个廉价的折中方案，事实上它可以更强大。APNs（一般也叫做remote push）因为有上面的各种限制，并不能很好的契合业务需要。而Local Push则不同，拥有完整的app业务上下文，还可以对push进行定制化。如果可以用Local Push替代Remote Push对体验的提升是不言而喻的。Loca push的限制在于app必须处于运行状态才能发起，很多聪明的开发商会开启background task，在用户按了home键之后再争取到几分钟的运行时间，在这期间所有的remote push都被替换成了local push。不要小看了这几分钟的时间，对于很多活跃度高的app来说，按home键之后马上又产生新的用户内容的概率并不小。微信，WhatsApp都采用了这种机制来提升体验。
+
+
+
+
+__叫醒你的App__
+开启background task之后虽然能够再多运行一会，但时间一到，app还是会被挂起或者kill。大部分多时候你的app是处于非活跃状态。很多app都需要预先获取内容，或者后台下载文件等来减少用户的等待时间。iOS7引入的Silent Notification和Background Fetch机制可以一定程度上满足这种需要。silent push实现比较简单，开启相关后台权限之后发送如下特定格式的json就能启用。
+
+
+
+唤醒app之后能处理的业务就多了，这对不少app来说是个非常实用的拓展，预加载内容也好，生成local push也好，都能提升体验。但这种唤醒机制并不总是可靠，有时候会“叫不醒”。app如果被手动kill叫不醒，如果background fetch被用户关闭也叫不醒，但这两种情况在手机充电的时候又可以被叫醒。Apple有一套自己的“智能”策略。
+
+
+
+
+__前台消息通道__
+大部分时候APNs都被用来通知用户某个处于background的app有新内容。但其实说白了APNs不过就是一条基于长链接的数据通道，在app处于foreground的时候也是能收到push消息的，不过不会有任何UI展示提醒而已。处理回调的位置也是在 也就是说APNs其实还是个免费的前台消息通道。而且有时候走APNs通道会比自己的server通道更快，如果客户端做好数据去重，多一个辅助的数据通道当然能提升体验。
+
+
+
+
+__新神通PushKit__
+APNs设计的初衷是避免app常驻后台，只在用户点收到push的时候主动去启动app。前面提到的silent push可以在有限的场景下，无需用户感知启动app。但到iOS8引入PushKit framework之后，app就可以通过push随时唤醒了，不过这个新的神通暂时还只限于voip类应用。
+
+之前在社区看到有人提问，说微信电话本可以在用户挂掉电话的时候，把呼叫中的push改成未接电话，好奇是怎么办到的。因为大家都知道remote push是无法通过server动态修改push内容的，所以答案只有一个可能，app被后台唤醒了。用户看到的push其实是local push，而local push是可以在客户端随意调整的。唤醒到方式就是利用PushKit。
+
+当然好处不仅仅是修改push内容这么简单。WhatsApp的用户在iOS8之后应该会有明显的感觉，好像很少看到启动页面了。看起来似乎是WhatsApp开启了voip后台常驻运行模式，但这种模式会比较费电，一些用户会有顾虑。真相也并非如此，WhatsApp并没有常驻后台，只不过是开启了PushKit的push唤醒机制。每次用户有新的离线消息，普通文本或者是voip call，app都会先被后台唤醒，再从server拉取离线消息，最后生成local push。等用户点击local push启动app的时候，没有启动页面，没有connecting和loading，所有的数据已经准备就绪，就好像WhatsApp一直在后台运行一样。也就是说，WhatsApp其实已经把所有的push都换成了local push。验证方法也很简单：
+
+手动kill WhatsApp。
+手机进入飞行模式。
+收一条离线消息。
+使用tcpdump开始监听iphone网络包，关闭飞行模式。
+这时候，app被push唤醒，能看到如下图一条WhatsApp相关的域名解析，说明app被启动了。而且能看到很多后续的服务器交互（拉取离线消息之类）。 2 微信不知道是出于什么考虑，既没有开启voip后台常驻模式，也没有利用PushKit唤醒机制。每次收到消息之后打开app，都是先看到地球，连接中，收取中，到真正看到最新消息经常需要3s以上。PushKit已经没有电量方面的额外损耗了，对voip类应用的体验提升非常之大。
+具体怎么实现PushKit可以参照文章末尾的链接地址。
+
+
+
+
+__总结__
+关于push这条长链接通道，Apple几乎在每次的iOS新版本里都会增加一些feature。为了控制新feature带来的影响，每次改动都不多，但怎么利用这些feature就看开发者各自都功力了。对用户体验带来的改变远不止官方文档上介绍的那么简单，只有多思考，时刻关注行业最新动态，才能发掘更多的隐藏“门道”。
+
+
+####参考链接
+Apple APNs官方文档：https://developer.apple.com/library/ios/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/Chapters/ApplePushService.html
+Silent Push实现：http://hayageek.com/ios-silent-push-notifications
+PushKit实现：https://zeropush.com/guide/guide-to-pushkit-and-voip
